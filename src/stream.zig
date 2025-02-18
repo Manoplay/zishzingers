@@ -13,7 +13,7 @@ pub fn MMStream(comptime Stream: type) type {
 
         pub fn readInt(self: *Self, comptime T: type) !T {
             //If the file has compressed integers, read the varint
-            if (self.compression_flags.compressed_integers and @typeInfo(T).Int.bits > 16)
+            if (self.compression_flags.compressed_integers and @typeInfo(T).int.bits > 16)
                 return try self.readVarInt(T);
 
             //Else read the int as normal
@@ -21,7 +21,7 @@ pub fn MMStream(comptime Stream: type) type {
         }
 
         pub fn readFloat(self: *Self, comptime T: type) !T {
-            return @bitCast(try self.stream.reader().readInt(std.meta.Int(.unsigned, @typeInfo(T).Float.bits), .big));
+            return @bitCast(try self.stream.reader().readInt(std.meta.Int(.unsigned, @typeInfo(T).float.bits), .big));
         }
 
         pub fn readSha1(self: *Self) ![std.crypto.hash.Sha1.digest_length]u8 {
@@ -356,9 +356,9 @@ pub fn MMStream(comptime Stream: type) type {
             const TypeInfo = @typeInfo(T);
 
             for (arr) |*item| {
-                if (TypeInfo == .Int) {
+                if (TypeInfo == .int) {
                     item.* = try self.readInt(T);
-                } else if (TypeInfo == .Float) {
+                } else if (TypeInfo == .float) {
                     item.* = try self.readFloat(T);
                 } else item.* = switch (T) {
                     MMTypes.Bytecode => @bitCast(try self.readInt(u64)),
@@ -436,7 +436,7 @@ pub fn MMStream(comptime Stream: type) type {
         }
 
         pub fn writeInt(self: *Self, comptime T: type, val: T) !void {
-            const bit_count = @typeInfo(T).Int.bits;
+            const bit_count = @typeInfo(T).int.bits;
 
             //If the int is >16 bits and we have compressed integers enabled, use them
             if (bit_count > 16 and self.compression_flags.compressed_integers) {
@@ -472,7 +472,7 @@ pub fn MMStream(comptime Stream: type) type {
 
         pub fn writeFloat(self: *Self, val: anytype) !void {
             return self.stream.writer().writeInt(
-                std.meta.Int(.unsigned, @typeInfo(@TypeOf(val)).Float.bits),
+                std.meta.Int(.unsigned, @typeInfo(@TypeOf(val)).float.bits),
                 @bitCast(val),
                 .big,
             );
@@ -645,9 +645,9 @@ pub fn MMStream(comptime Stream: type) type {
             const TypeInfo = @typeInfo(T);
 
             for (arr) |item| {
-                if (TypeInfo == .Int) {
+                if (TypeInfo == .int) {
                     try self.writeInt(T, item);
-                } else if (TypeInfo == .Float) {
+                } else if (TypeInfo == .float) {
                     try self.writeFloat(item);
                 } else switch (T) {
                     MMTypes.Bytecode => try self.writeInt(u64, @bitCast(item)),
@@ -728,12 +728,7 @@ pub fn MMStream(comptime Stream: type) type {
             }
         }
 
-        pub fn readFileDB(self: *Self, child_allocator: std.mem.Allocator) !MMTypes.FileDB {
-            var arena = std.heap.ArenaAllocator.init(child_allocator);
-            errdefer arena.deinit();
-
-            const allocator = arena.allocator();
-
+        pub fn readFileDB(self: *Self, allocator: std.mem.Allocator) !MMTypes.FileDB {
             const header = try self.readInt(i32);
 
             const db_type: MMTypes.FileDB.Type = switch (header) {
@@ -756,6 +751,7 @@ pub fn MMStream(comptime Stream: type) type {
             for (0..count) |_| {
                 //Read the path, length is i16 on LBP3, i32 on LBP1/2/Vita
                 var path = try allocator.alloc(u8, if (db_type == .lbp3) try self.readInt(u16) else try self.readInt(u32));
+                defer allocator.free(path);
                 _ = try self.readBytes(path);
 
                 //Skip 4 bytes on non lbp3
@@ -770,7 +766,7 @@ pub fn MMStream(comptime Stream: type) type {
                 const guid = try self.readInt(u32);
 
                 // On LBPVita filenames are not preserved in some archives, so lets prepend the hash name
-                if (path[0] == '.' and db_type == .vita) {
+                if (db_type == .vita and path[0] == '.') {
                     const new_path = try allocator.alloc(u8, (hash.len * 2) + path.len);
 
                     var stream = std.io.fixedBufferStream(new_path);
@@ -793,7 +789,7 @@ pub fn MMStream(comptime Stream: type) type {
                 }
 
                 const entry: MMTypes.FileDB.Entry = .{
-                    .path = path,
+                    .path = try std.BoundedArray(u8, 256).fromSlice(path),
                     .timestamp = timestamp,
                     .size = size,
                 };
@@ -805,7 +801,7 @@ pub fn MMStream(comptime Stream: type) type {
             return .{
                 .hash_lookup = hash_lookup,
                 .guid_lookup = guid_lookup,
-                .allocator = arena,
+                .allocator = allocator,
             };
         }
     };

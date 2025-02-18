@@ -124,6 +124,7 @@ pub fn compile(
     stdout: anytype,
 ) !void {
     _ = stdout; // autofix
+
     const params = comptime clap.parseParamsComptime(
         \\-h, --help                       Display this help and exit.
         \\-o, --out-file <str>             The output path for the compilation, defaults to "inputname.ff"
@@ -134,6 +135,13 @@ pub fn compile(
         \\-y, --branch-revision <u16>      The branch revision of the asset to be serialized
         \\--optimize <str>                 Specify the compilation mode used, defaults to Debug (Debug, ReleaseSafe, ReleaseFast, ReleaseSmall)
         \\                                 this overrides the GUID specified in the file.
+        \\--extended-runtime               Whether to enable use of Aidan's extended script runtime
+        \\--game <str>                     The game being compiled for (`lbp1`, `lbp2`, `lbp3ps3`, `lbp3ps4`, `vita`).
+        \\                                 This determines what raw_ptr offsets and names are used for EXT_LOAD/STORE emulation. 
+        \\                                 You may experience crashes/unexpected behaviour if this mismatches the game it runs on.
+        \\--hashed                         Tells the compiler the script is to be used in a hashed context.
+        \\                                 This does various things, like changing all type references to the hashed script to be the base class, 
+        \\                                 and using CALLVsp on all method calls to self, to make function calls to self work correctly
         \\<str>                            The source file
         \\
     );
@@ -150,7 +158,7 @@ pub fn compile(
     defer res.deinit();
 
     //If no arguments are passed or the user requested the help menu, display the help menu
-    if (res.args.help != 0 or res.positionals.len == 0 or res.args.revision == null) {
+    if (res.args.help != 0 or res.positionals.len == 0 or res.args.revision == null or res.args.game == null or res.args.game.?.len == 0) {
         try clap.help(stderr, clap.Help, &params, .{});
 
         return;
@@ -171,15 +179,27 @@ pub fn compile(
     }
 
     for (res.args.library) |library| {
-        var iter = std.mem.split(u8, library, ":");
+        var iter = std.mem.splitScalar(u8, library, ':');
         const name = iter.next() orelse @panic("no library name specified");
         const path = iter.next() orelse @panic("no library path specified");
 
         try defined_libraries.putNoClobber(name, try std.fs.cwd().openDir(path, .{}));
     }
 
+    const root_progress_node = std.Progress.start(.{
+        .estimated_total_items = res.positionals.len,
+    });
+    defer root_progress_node.end();
+
     for (res.positionals) |source_file| {
-        // std.debug.print("{s}\n", .{source_file});
+        var progress_name_buf: [256]u8 = undefined;
+        const compile_progress_node = root_progress_node.start(
+            try std.fmt.bufPrint(&progress_name_buf, "Compile {s}", .{source_file}),
+            //5 steps, lexemeization, parsing, type resolution, compilation, serialization
+            5,
+        );
+        defer compile_progress_node.end();
+
         const source_code: []const u8 = try std.fs.cwd().readFileAlloc(allocator, source_file, std.math.maxInt(usize));
         defer allocator.free(source_code);
 
@@ -197,6 +217,8 @@ pub fn compile(
             break :blk try lexemes.toOwnedSlice();
         };
         defer allocator.free(lexemes);
+        // mark that lexemization is done
+        compile_progress_node.completeOne();
 
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
@@ -212,9 +234,8 @@ pub fn compile(
             ast_allocator,
             lexemes,
             &type_intern_pool,
+            compile_progress_node,
         );
-
-        // try Debug.dumpAst(stdout, ast);
 
         var a_string_table = Resolvinator.AStringTable.init(allocator);
         defer a_string_table.deinit();
@@ -228,6 +249,7 @@ pub fn compile(
             &a_string_table,
             script_identifier,
             &type_intern_pool,
+            compile_progress_node,
         );
 
         // var debug = Debug{
@@ -245,6 +267,10 @@ pub fn compile(
                 .branch_revision = res.args.@"branch-revision" orelse 0,
                 .branch_id = res.args.@"branch-id" orelse 0,
             },
+            .extended_runtime = res.args.@"extended-runtime" != 0,
+            .game = std.meta.stringToEnum(Genny.CompilationOptions.Game, res.args.game.?) orelse @panic("invalid game, valid are (`lbp1`, `lbp2`, `lbp3ps3`, `lbp3ps4`, `vita`)"),
+            .identifier = script_identifier,
+            .hashed = res.args.hashed > 0,
         };
 
         var genny = Genny.init(
@@ -256,7 +282,7 @@ pub fn compile(
         );
         defer genny.deinit();
 
-        const script = try genny.generate();
+        const script = try genny.generate(compile_progress_node);
 
         //TODO: actually use `output` parameter
         const out_path = try std.fmt.allocPrint(allocator, "{s}.ff", .{std.fs.path.stem(source_file)});
@@ -282,24 +308,27 @@ pub fn compile(
 
         try resource_stream.writeScript(script, allocator);
 
-        var dependencies = std.AutoArrayHashMap(Resource.Dependency, void).init(allocator);
-        defer dependencies.deinit();
+        const dependencies = try allocator.alloc(Resource.Dependency, script.depending_guids.?.len);
+        defer allocator.free(dependencies);
 
-        for (script.type_references) |type_reference| {
-            if (type_reference.script) |script_depentency| {
-                try dependencies.put(.{ .ident = script_depentency, .type = .script }, {});
-            }
+        for (dependencies, script.depending_guids.?) |*dependency, guid| {
+            dependency.* = .{ .type = .script, .ident = .{ .guid = guid } };
         }
+
+        const serialization_progress_node = compile_progress_node.start("Serialization", 0);
         var file_stream: std.io.StreamSource = .{ .file = out };
         try Resource.writeResource(
             .script,
             compression_flags,
-            dependencies.keys(), //TODO: write out dependencies by pulling referenced files
+            // Scripts dont actually need to have their dependency table filled out
+            // https://github.com/ennuo/toolkit/blob/15342e1afca2d5ac1de49e207922099e7aacef86/lib/cwlib/src/main/java/cwlib/util/Resources.java#L152
+            dependencies,
             compilation_options.revision,
             &file_stream,
             resource_stream.stream.array_list.items,
             allocator,
         );
+        serialization_progress_node.end();
 
         // try Disasm.disassembleScript(stdout, allocator, script);
     }
@@ -315,7 +344,7 @@ pub fn generateLibrary(
 
     const params = comptime clap.parseParamsComptime(
         \\-h, --help             Display this help and exit.
-        \\-m, --map       <str>  The MAP file to use. Required
+        \\-m, --map       <str>...  The MAP files to use. Required
         \\-f, --folder    <str>  The game data folder to use. Required
         \\-o, --output    <str>  The output folder of the library. Required
         \\-s, --namespace <str>  The namespace to put the generated files in.
@@ -336,7 +365,7 @@ pub fn generateLibrary(
 
     //If no arguments are passed or the user requested the help menu, display the help menu
     if (res.args.help != 0 or
-        res.args.map == null or
+        res.args.map.len == 0 or
         res.args.folder == null or
         res.args.name == null or
         res.args.output == null)
@@ -369,29 +398,40 @@ pub fn generateLibrary(
     var game_data_dir = try std.fs.cwd().openDir(res.args.folder.?, .{});
     defer game_data_dir.close();
 
-    const map_file = try std.fs.cwd().openFile(res.args.map.?, .{});
-    defer map_file.close();
+    var full_db: ?MMTypes.FileDB = null;
+    defer full_db.?.deinit();
 
-    const MMStream = Stream.MMStream(std.io.StreamSource);
+    for (res.args.map, 0..) |map_path, i| {
+        const map_file = try std.fs.cwd().openFile(map_path, .{});
+        defer map_file.close();
 
-    var stream = MMStream{
-        .stream = std.io.StreamSource{ .file = map_file },
-        // nonsense compression files, since its not important for MAP files
-        .compression_flags = .{
-            .compressed_integers = false,
-            .compressed_matrices = false,
-            .compressed_vectors = false,
-        },
-        // nonsense revision, since its not important for MAP files
-        .revision = .{
-            .branch_id = 0,
-            .branch_revision = 0,
-            .head = 0,
-        },
-    };
+        const MMStream = Stream.MMStream(std.io.StreamSource);
 
-    const file_db = try stream.readFileDB(allocator);
-    defer file_db.deinit();
+        var stream = MMStream{
+            .stream = std.io.StreamSource{ .file = map_file },
+            // nonsense compression files, since its not important for MAP files
+            .compression_flags = .{
+                .compressed_integers = false,
+                .compressed_matrices = false,
+                .compressed_vectors = false,
+            },
+            // nonsense revision, since its not important for MAP files
+            .revision = .{
+                .branch_id = 0,
+                .branch_revision = 0,
+                .head = 0,
+            },
+        };
+
+        var file_db = try stream.readFileDB(allocator);
+
+        if (i == 0) {
+            full_db = file_db;
+        } else {
+            try full_db.?.combine(file_db);
+            file_db.deinit();
+        }
+    }
 
     var scripts = std.AutoHashMap(u32, MMTypes.Script).init(allocator);
     defer {
@@ -403,15 +443,22 @@ pub fn generateLibrary(
         scripts.deinit();
     }
 
-    var iter = file_db.guid_lookup.iterator();
+    var iter = full_db.?.guid_lookup.iterator();
     while (iter.next()) |entry| {
-        if (!std.mem.endsWith(u8, entry.value_ptr.path, ".ff"))
+        if (!std.mem.endsWith(u8, entry.value_ptr.path.constSlice(), ".ff"))
             continue;
 
-        // std.debug.print("handling g{d}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path });
+        std.debug.print("handling g{d}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path.constSlice() });
         // try stdout.print("handling g{d}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path });
 
-        const file_data = try game_data_dir.readFileAlloc(allocator, entry.value_ptr.path, std.math.maxInt(usize));
+        const file_data = game_data_dir.readFileAlloc(allocator, entry.value_ptr.path.constSlice(), std.math.maxInt(usize)) catch |err| {
+            if (err == std.fs.File.OpenError.FileNotFound) {
+                std.debug.print("Could not find file {s}. skipping...\n", .{entry.value_ptr.path.constSlice()});
+                continue;
+            }
+
+            return err;
+        };
         defer allocator.free(file_data);
 
         var resource = try Resource.readResource(file_data, allocator);
@@ -446,5 +493,78 @@ pub fn generateLibrary(
             res.args.namespace,
             res.args.name.?,
         );
+    }
+}
+
+pub fn dumpModdedAssetHashes(
+    allocator: std.mem.Allocator,
+    arg_iter: *std.process.ArgIterator,
+    stderr: anytype,
+    stdout: anytype,
+) !void {
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help    Display this help and exit.
+        \\<str>...      The map files to parse
+        \\
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &params, clap.parsers.default, arg_iter, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        // Report useful error and exit
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
+
+    //If no arguments are passed or the user requested the help menu, display the help menu
+    if (res.args.help != 0 or
+        res.positionals.len == 0)
+    {
+        try clap.help(stderr, clap.Help, &params, .{});
+
+        return;
+    }
+
+    var full_db: ?MMTypes.FileDB = null;
+    defer full_db.?.deinit();
+
+    for (res.positionals, 0..) |map_path, i| {
+        const map_file = try std.fs.cwd().openFile(map_path, .{});
+        defer map_file.close();
+
+        const MMStream = Stream.MMStream(std.io.StreamSource);
+
+        var stream = MMStream{
+            .stream = std.io.StreamSource{ .file = map_file },
+            // nonsense compression files, since its not important for MAP files
+            .compression_flags = .{
+                .compressed_integers = false,
+                .compressed_matrices = false,
+                .compressed_vectors = false,
+            },
+            // nonsense revision, since its not important for MAP files
+            .revision = .{
+                .branch_id = 0,
+                .branch_revision = 0,
+                .head = 0,
+            },
+        };
+
+        var file_db = try stream.readFileDB(allocator);
+
+        if (i == 0) {
+            full_db = file_db;
+        } else {
+            try full_db.?.combine(file_db);
+            file_db.deinit();
+        }
+    }
+
+    var iter = full_db.?.hash_lookup.iterator();
+    while (iter.next()) |entry| {
+        try stdout.print("{s}\n", .{std.fmt.bytesToHex(entry.key_ptr.*, .lower)});
     }
 }

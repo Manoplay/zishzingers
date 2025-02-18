@@ -246,9 +246,9 @@ pub const Bytecode = packed struct(u64) {
     }
 };
 
-pub const InstructionType = @typeInfo(TaggedInstruction).Union.tag_type.?;
-pub const InstructionParams = @Type(.{ .Union = blk: {
-    var info = @typeInfo(TaggedInstruction).Union;
+pub const InstructionType = @typeInfo(TaggedInstruction).@"union".tag_type.?;
+pub const InstructionParams = @Type(.{ .@"union" = blk: {
+    var info = @typeInfo(TaggedInstruction).@"union";
     info.tag_type = null;
     info.layout = .@"packed";
     info.decls = &.{};
@@ -847,7 +847,7 @@ pub const TaggedInstruction = union(enum(u8)) {
     /// Gets the length of the array stored in the base_idx register,
     /// storing the result as a 32-bit integer inside of the destination register
     GET_ARRAY_LEN: GetBuiltinMemberClass = 0x9b,
-    /// Creates a new array with the specified type, with the size coming from the size_idx register,
+    /// Creates a new array with the specified child type, with the size being an s32 coming from the size_idx register,
     /// stores the result in the destination register
     NEW_ARRAY: NewArrayClass = 0x9c,
     /// TODO: 0x211e08
@@ -1109,13 +1109,13 @@ pub const WStringTable = struct {
     }
 };
 
-const ResolvableTypeReference = u32;
+pub const ResolvableTypeReference = u32;
 
-const ResolvableString = u32;
+pub const ResolvableString = u32;
 
-const ResolvableFunction = u32;
+pub const ResolvableFunction = u32;
 
-const ArgumentSlice = struct {
+pub const ArgumentSlice = struct {
     begin: u32,
     end: u32,
 
@@ -1128,7 +1128,7 @@ const ArgumentSlice = struct {
     }
 };
 
-const ResolvableBytecodeSlice = struct {
+pub const ResolvableBytecodeSlice = struct {
     begin: u32,
     end: u32,
 
@@ -1141,7 +1141,7 @@ const ResolvableBytecodeSlice = struct {
     }
 };
 
-const ResolvableLineNumberSlice = struct {
+pub const ResolvableLineNumberSlice = struct {
     begin: u32,
     end: u32,
 
@@ -1154,7 +1154,7 @@ const ResolvableLineNumberSlice = struct {
     }
 };
 
-const ResolvableLocalVariableSlice = struct {
+pub const ResolvableLocalVariableSlice = struct {
     begin: u32,
     end: u32,
 
@@ -1235,7 +1235,7 @@ pub const Modifiers = packed struct(u32) {
     pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var first = true;
 
-        inline for (@typeInfo(Modifiers).Struct.fields) |field| {
+        inline for (@typeInfo(Modifiers).@"struct".fields) |field| {
             if (comptime std.mem.eql(u8, "_unused", field.name))
                 continue;
 
@@ -1404,7 +1404,7 @@ fn GenerateResourceType(items: anytype) type {
 
         return struct {
             pub const ResourceType = @Type(std.builtin.Type{
-                .Enum = .{
+                .@"enum" = .{
                     .tag_type = u8,
                     .decls = &.{},
                     .is_exhaustive = false,
@@ -1615,7 +1615,7 @@ pub const FileDB = struct {
     pub const HashLookupMap = std.AutoHashMap([std.crypto.hash.Sha1.digest_length]u8, FileDB.Entry);
     pub const GuidLookupMap = std.AutoHashMap(u32, FileDB.Entry);
 
-    allocator: std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
     hash_lookup: HashLookupMap,
     guid_lookup: GuidLookupMap,
 
@@ -1627,12 +1627,26 @@ pub const FileDB = struct {
     };
 
     pub const Entry = struct {
-        path: []const u8,
+        path: std.BoundedArray(u8, 256),
         timestamp: i32,
         size: u32,
     };
 
-    pub fn deinit(self: FileDB) void {
-        self.allocator.deinit();
+    pub fn deinit(self: *FileDB) void {
+        self.guid_lookup.deinit();
+        self.hash_lookup.deinit();
+    }
+
+    pub fn combine(self: *FileDB, other: FileDB) !void {
+        var hash_iter = other.hash_lookup.iterator();
+        var guid_iter = other.guid_lookup.iterator();
+
+        while (hash_iter.next()) |hash| {
+            try self.hash_lookup.put(hash.key_ptr.*, hash.value_ptr.*);
+        }
+
+        while (guid_iter.next()) |guid| {
+            try self.guid_lookup.put(guid.key_ptr.*, guid.value_ptr.*);
+        }
     }
 };

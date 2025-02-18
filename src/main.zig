@@ -9,10 +9,10 @@ const no_command_error =
     \\
     \\Commands:
     \\
-    \\    disasm              Disassembles a script file into a human readable format.
-    \\    compile             Compiles an A# source file into a script.
-    \\    generate_library    Generates a library of stubs from a MAP and a extracted folder.
-    \\
+    \\    disasm                   Disassembles a script file into a human readable format.
+    \\    compile                  Compiles an A# source file into a script.
+    \\    generate_library         Generates a library of stubs from a MAP and a extracted folder.
+    \\    dump_modded_asset_hashes Tool for generating asset hash tables for Refresh
     \\
 ;
 
@@ -20,6 +20,7 @@ const Subcommand = enum {
     disasm,
     compile,
     generate_library,
+    dump_modded_asset_hashes,
 };
 
 pub fn main() !void {
@@ -34,7 +35,7 @@ pub fn main() !void {
     // If we have runtime safety, use GPA
     var gpa = if (builtin.mode == .Debug)
         std.heap.GeneralPurposeAllocator(.{
-            // .stack_trace_frames = 0,
+            .stack_trace_frames = 20,
         }){}
     else {};
 
@@ -68,5 +69,6 @@ pub fn main() !void {
         .disasm => try Frontend.disasm(allocator, &arg_iter, stderr, stdout),
         .compile => try Frontend.compile(allocator, &arg_iter, stderr, stdout),
         .generate_library => try Frontend.generateLibrary(allocator, &arg_iter, stderr, stdout),
+        .dump_modded_asset_hashes => try Frontend.dumpModdedAssetHashes(allocator, &arg_iter, stderr, stdout),
     }
 }

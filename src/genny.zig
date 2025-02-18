@@ -553,6 +553,18 @@ const Codegen = struct {
         } }, .void));
     }
 
+    pub fn emitMoveSafePtr(self: *Codegen, dst: Register, src: Register) !void {
+        ensureAlignment(dst, .single_item);
+        ensureType(dst, .safe_ptr);
+        ensureAlignment(src, .single_item);
+        ensureType(src, .safe_ptr);
+
+        try self.appendBytecode(MMTypes.Bytecode.init(.{ .MOVsp = .{
+            .src_idx = src.addr(),
+            .dst_idx = dst.addr(),
+        } }, .void));
+    }
+
     pub fn emitMoveS32(self: *Codegen, dst: Register, src: Register) !void {
         ensureAlignment(dst, .single_item);
         ensureType(dst, .s32);
@@ -1697,6 +1709,7 @@ fn compileExpression(
                     tupleMachineTypes(.s32, .f32) => try codegen.emitS32ToF32(register, source),
                     tupleMachineTypes(.object_ref, .object_ref) => try codegen.emitMoveObjectRef(register, source),
                     tupleMachineTypes(.s32, .s32) => try codegen.emitMoveS32(register, source),
+                    tupleMachineTypes(.safe_ptr, .safe_ptr) => try codegen.emitMoveSafePtr(register, source),
                     else => std.debug.panic("TODO: cast from expression {s} to {s}", .{ @tagName(source_type), @tagName(dst_type) }),
                 }
 
@@ -2775,7 +2788,10 @@ fn compileBlock(
                                         })).index),
                                     }),
                                 },
-                                Parser.Bytecode.Params.SetMemberClass => @panic("TODO"),
+                                Parser.Bytecode.Params.SetMemberClass => MMTypes.Bytecode{ .type = bytecode.machine_type, .op = bytecode.op, .params = @bitCast(MMTypes.SetMemberClass{ .base_idx = val.base_idx, .field_ref = @intCast((try codegen.genny.field_references.getOrPut(.{
+                                    .name = @intCast((try codegen.genny.a_string_table.getOrPut(val.field)).index),
+                                    .type_reference = @intCast((try codegen.genny.type_references.getOrPut(codegen.genny.type_intern_pool.get(val.type).resolved.valueTypeReference())).index),
+                                })).index), .src_idx = val.src_idx }) },
                                 Parser.Bytecode.Params.GetElementClass => @panic("TODO"),
                                 Parser.Bytecode.Params.SetElementClass => MMTypes.Bytecode{
                                     .type = bytecode.machine_type,
@@ -2832,7 +2848,7 @@ fn compileBlock(
                                     }),
                                 },
                                 Parser.Bytecode.Params.CastClass => @panic("TODO"),
-                                Parser.Bytecode.Params.NewObjectClass => @panic("TODO"),
+                                Parser.Bytecode.Params.NewObjectClass => MMTypes.Bytecode{ .type = bytecode.machine_type, .op = bytecode.op, .params = @bitCast(MMTypes.NewObjectClass{ .dst_idx = val.dst_idx, .type_idx = @intCast((try codegen.genny.type_references.getOrPut(codegen.genny.type_intern_pool.get(val.type).resolved.valueTypeReference())).index) }) },
                                 Parser.Bytecode.Params.LoadVectorConst => MMTypes.Bytecode.init(.{ .LCv4 = .{
                                     .dst_idx = val.dst_idx,
                                     .constant_idx = @intCast((try codegen.genny.f32_constants.getOrPut(val.value)).index),

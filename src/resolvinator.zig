@@ -1729,6 +1729,11 @@ fn resolveExpression(
                 parent_progress_node,
             );
         },
+        .write => |write| {
+            try self.resolveExpression(write, try self.type_intern_pool.asciiStringType(), script, script_table, a_string_table, function_variable_stack, parent_progress_node);
+            expression.type = try self.type_intern_pool.fromFishType(.void);
+            try self.resolveParsedType(expression.type, script, script_table, a_string_table, false, parent_progress_node);
+        },
         else => |contents| std.debug.panic("TODO: resolution of expression type {s}", .{@tagName(contents)}),
     }
 

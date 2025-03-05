@@ -999,6 +999,12 @@ const Codegen = struct {
         } }, .void));
     }
 
+    pub fn emitWrite(self: *Codegen, text: Register) !void {
+        ensureAlignment(text, .single_item);
+        ensureType(text, .object_ref);
+        try self.appendBytecode(MMTypes.Bytecode.init(.{ .WRITE = .{ .src_idx = text.addr() } }, text.machineType()));
+    }
+
     pub fn emitGetElement(self: *Codegen, dst: Register, idx: Register, base: Register) !void {
         ensureAlignment(dst, .single_item);
         ensureAlignment(idx, .single_item);
@@ -2169,6 +2175,11 @@ fn compileExpression(
             try codegen.register_allocator.free(array_source);
 
             break :blk dest_register;
+        },
+        .write => |write| blk: {
+            const register = (try compileExpression(codegen, function_local_variables, scope_local_variables, write, false, null, parent_progress_node)).?;
+            try codegen.emitWrite(register);
+            break :blk register;
         },
         else => |tag| std.debug.panic("cant codegen for expression {s} yet\n", .{@tagName(tag)}),
     };

@@ -536,6 +536,7 @@ pub const Node = union(enum) {
                 child: TypeInternPool.Index,
             },
             array_access: BinaryExpression,
+            write: *Expression,
 
             pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
                 return switch (value) {
@@ -592,6 +593,7 @@ pub const Node = union(enum) {
                     .native_strcpy => |literal| writer.print("expression_contents {{ .native_strcpy = {{ .dst = {}, .fill_byte = {?d}, .length = {?d}, .src = {} }} }}", .{ literal.dst, literal.fill_byte, literal.length, literal.src }),
                     .new_array => |new_array| writer.print("new_array {{ .new_array = {} }}", .{new_array.size}),
                     .array_access => |array_access| writer.print("array_access {{ .array_access = .{{ .arr = {}, .idx = {} }} }}", .{ array_access.lefthand, array_access.righthand }),
+                    .write => |write| writer.print("write {{ {} }}", .{write}),
                 };
             }
         };
@@ -1742,6 +1744,15 @@ fn consumePrimaryExpression(self: *Self, parent_progress_node: std.Progress.Node
         //Builtin functions
         if (maybeHashKeyword(first)) |keyword| {
             switch (keyword) {
+                hashKeyword("@write") => {
+                    if (parameters.len != 1)
+                        @panic("wrong parameter length for write builtin");
+                    expression.* = .{
+                        .contents = .{ .write = parameters[0] },
+                        .type = try self.type_intern_pool.fromFishType(.void),
+                    };
+                    return expression;
+                },
                 hashKeyword("@strcpy") => {
                     if (parameters.len != 2 and parameters.len != 4)
                         @panic("wrong parameter length for strcpy builtin");

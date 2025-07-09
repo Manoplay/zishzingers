@@ -1163,7 +1163,7 @@ const Codegen = struct {
 };
 
 const Register = union(enum) {
-    pub const Enum = @typeInfo(Register).@"union".tag_type.?;
+    pub const Enum = @typeInfo(Register).Union.tag_type.?;
 
     pub const SingleItem = struct {
         addr: u16,

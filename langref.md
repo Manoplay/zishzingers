@@ -52,9 +52,9 @@ primary             → "true" | "false" | "null"
                     | VARIABLE_ACCESS ;
 hash_literal        → hSHA1HASH ;
 guid_literal        → gNUMBER ;
-vec2_construction   → "float2(" expression "," expression ")" ;
-vec3_construction   → "float3(" expression "," expression "," expression ")" ;
-vec4_construction   → "float4("
+vec2_construction   → "@float2(" expression "," expression ")" ;
+vec3_construction   → "@float3(" expression "," expression "," expression ")" ;
+vec4_construction   → "@float4("
                       expression "," 
                       expression "," 
                       expression "," 

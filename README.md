@@ -40,10 +40,11 @@ Compilation options for games:
 - Deploy `-r 0x2C2`
 - Vita `-r 0x3E2 -z 17457 -y 132`
 - LBP2 `-r 0x3E6`
+- LBP1 GOTY `-r 626 -z 0x4C44 -y 0x17`
 
 ```bash
 # Read the help file `zishzingers compile --help` for details on what these options do!
-$ zishzingers compile compile samples/tweakegg.as -l lbpdeploy:deploy_std/ -i 1234
+$ zishzingers compile samples/tweakegg.as -l lbpdeploy:deploy_std/ -i 1234
 ```
 
 Sample scripts are provided in the `samples/` folder.

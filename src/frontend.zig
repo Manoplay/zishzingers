@@ -40,7 +40,8 @@ pub fn disasm(
     defer res.deinit();
 
     //If no arguments are passed or the user requested the help menu, display the help menu
-    if (res.args.help != 0 or res.positionals.len == 0) {
+    const positionals = res.positionals;
+    if (res.args.help != 0 or positionals.len == 0) {
         try clap.help(stderr, clap.Help, &params, .{});
 
         return;
@@ -69,7 +70,7 @@ pub fn disasm(
                 compression_flags.compressed_vectors = true;
         }
 
-        for (res.positionals) |path| {
+        if (positionals[0]) |path| {
             const file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
 
@@ -89,8 +90,8 @@ pub fn disasm(
             try Disasm.disassembleScript(stdout, allocator, script);
         }
     } else {
-        //Iterate over all paths and disassemble them
-        for (res.positionals) |path| {
+        //Disassemble the single positional path
+        if (positionals[0]) |path| {
             const file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
 
@@ -157,8 +158,9 @@ pub fn compile(
     };
     defer res.deinit();
 
+    const positionals = res.positionals;
     //If no arguments are passed or the user requested the help menu, display the help menu
-    if (res.args.help != 0 or res.positionals.len == 0 or res.args.revision == null or res.args.game == null or res.args.game.?.len == 0) {
+    if (res.args.help != 0 or positionals.len == 0 or res.args.revision == null or res.args.game == null or res.args.game.?.len == 0) {
         try clap.help(stderr, clap.Help, &params, .{});
 
         return;
@@ -187,11 +189,11 @@ pub fn compile(
     }
 
     const root_progress_node = std.Progress.start(.{
-        .estimated_total_items = res.positionals.len,
+        .estimated_total_items = 1,
     });
     defer root_progress_node.end();
 
-    for (res.positionals) |source_file| {
+    if (positionals[0]) |source_file| {
         var progress_name_buf: [256]u8 = undefined;
         const compile_progress_node = root_progress_node.start(
             try std.fmt.bufPrint(&progress_name_buf, "Compile {s}", .{source_file}),
@@ -290,7 +292,7 @@ pub fn compile(
         const out = try std.fs.cwd().createFile(res.args.@"out-file" orelse out_path, .{});
         defer out.close();
 
-        const compression_flags = .{
+        const compression_flags = MMTypes.CompressionFlags{
             .compressed_integers = true,
             .compressed_matrices = true,
             .compressed_vectors = true,
@@ -519,9 +521,10 @@ pub fn dumpModdedAssetHashes(
     };
     defer res.deinit();
 
+    const positionals = res.positionals;
     //If no arguments are passed or the user requested the help menu, display the help menu
     if (res.args.help != 0 or
-        res.positionals.len == 0)
+        positionals.len == 0)
     {
         try clap.help(stderr, clap.Help, &params, .{});
 
@@ -531,37 +534,31 @@ pub fn dumpModdedAssetHashes(
     var full_db: ?MMTypes.FileDB = null;
     defer full_db.?.deinit();
 
-    for (res.positionals, 0..) |map_path, i| {
-        const map_file = try std.fs.cwd().openFile(map_path, .{});
-        defer map_file.close();
+    const map_path = positionals[0];
+    const map_file = try std.fs.cwd().openFile(map_path[0], .{});
+    defer map_file.close();
 
-        const MMStream = Stream.MMStream(std.io.StreamSource);
+    const MMStream = Stream.MMStream(std.io.StreamSource);
 
-        var stream = MMStream{
-            .stream = std.io.StreamSource{ .file = map_file },
-            // nonsense compression files, since its not important for MAP files
-            .compression_flags = .{
-                .compressed_integers = false,
-                .compressed_matrices = false,
-                .compressed_vectors = false,
-            },
-            // nonsense revision, since its not important for MAP files
-            .revision = .{
-                .branch_id = 0,
-                .branch_revision = 0,
-                .head = 0,
-            },
-        };
+    var stream = MMStream{
+        .stream = std.io.StreamSource{ .file = map_file },
+        // nonsense compression files, since its not important for MAP files
+        .compression_flags = .{
+            .compressed_integers = false,
+            .compressed_matrices = false,
+            .compressed_vectors = false,
+        },
+        // nonsense revision, since its not important for MAP files
+        .revision = .{
+            .branch_id = 0,
+            .branch_revision = 0,
+            .head = 0,
+        },
+    };
 
-        var file_db = try stream.readFileDB(allocator);
+    const file_db = try stream.readFileDB(allocator);
 
-        if (i == 0) {
-            full_db = file_db;
-        } else {
-            try full_db.?.combine(file_db);
-            file_db.deinit();
-        }
-    }
+    full_db = file_db;
 
     var iter = full_db.?.hash_lookup.iterator();
     while (iter.next()) |entry| {

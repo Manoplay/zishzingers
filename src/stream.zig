@@ -13,7 +13,7 @@ pub fn MMStream(comptime Stream: type) type {
 
         pub fn readInt(self: *Self, comptime T: type) !T {
             //If the file has compressed integers, read the varint
-            if (self.compression_flags.compressed_integers and @typeInfo(T).Int.bits > 16)
+            if (self.compression_flags.compressed_integers and @typeInfo(T).int.bits > 16)
                 return try self.readVarInt(T);
 
             //Else read the int as normal
@@ -21,7 +21,7 @@ pub fn MMStream(comptime Stream: type) type {
         }
 
         pub fn readFloat(self: *Self, comptime T: type) !T {
-            return @bitCast(try self.stream.reader().readInt(std.meta.Int(.unsigned, @typeInfo(T).Float.bits), .big));
+            return @bitCast(try self.stream.reader().readInt(std.meta.Int(.unsigned, @typeInfo(T).float.bits), .big));
         }
 
         pub fn readSha1(self: *Self) ![std.crypto.hash.Sha1.digest_length]u8 {
@@ -106,72 +106,71 @@ pub fn MMStream(comptime Stream: type) type {
                     errdefer allocator.free(property_definitions);
 
                     const functions, const shared_arguments, const shared_bytecode, const shared_line_numbers, const shared_local_variables =
-                        if (self.revision.head < 0x1ec)
-                    blk: {
-                        const functions = try self.readArray(MMTypes.Function, allocator, null, ScriptReadType);
-                        defer {
-                            for (functions) |function| {
-                                function.deinit(allocator);
+                        if (self.revision.head < 0x1ec) blk: {
+                            const functions = try self.readArray(MMTypes.Function, allocator, null, ScriptReadType);
+                            defer {
+                                for (functions) |function| {
+                                    function.deinit(allocator);
+                                }
+
+                                allocator.free(functions);
                             }
 
-                            allocator.free(functions);
-                        }
+                            const function_definitions = try allocator.alloc(MMTypes.FunctionDefinition, functions.len);
+                            errdefer allocator.free(functions);
+                            var shared_arguments = std.ArrayList(MMTypes.Argument).init(allocator);
+                            defer shared_arguments.deinit();
+                            var shared_bytecode = std.ArrayList(MMTypes.Bytecode).init(allocator);
+                            defer shared_bytecode.deinit();
+                            var shared_line_numbers = std.ArrayList(u16).init(allocator);
+                            defer shared_line_numbers.deinit();
+                            var shared_local_variables = std.ArrayList(MMTypes.LocalVariable).init(allocator);
+                            defer shared_local_variables.deinit();
 
-                        const function_definitions = try allocator.alloc(MMTypes.FunctionDefinition, functions.len);
-                        errdefer allocator.free(functions);
-                        var shared_arguments = std.ArrayList(MMTypes.Argument).init(allocator);
-                        defer shared_arguments.deinit();
-                        var shared_bytecode = std.ArrayList(MMTypes.Bytecode).init(allocator);
-                        defer shared_bytecode.deinit();
-                        var shared_line_numbers = std.ArrayList(u16).init(allocator);
-                        defer shared_line_numbers.deinit();
-                        var shared_local_variables = std.ArrayList(MMTypes.LocalVariable).init(allocator);
-                        defer shared_local_variables.deinit();
+                            for (functions, 0..) |function, i| {
+                                function_definitions[i] = MMTypes.FunctionDefinition{
+                                    .name = function.name,
+                                    .modifiers = function.modifiers,
+                                    .stack_size = function.stack_size,
+                                    .type_reference = function.type_reference,
+                                    .arguments = .{ .begin = @intCast(shared_arguments.items.len), .end = @intCast(shared_arguments.items.len + function.arguments.len) },
+                                    .bytecode = .{ .begin = @intCast(shared_bytecode.items.len), .end = @intCast(shared_bytecode.items.len + function.bytecode.len) },
+                                    .line_numbers = .{ .begin = @intCast(shared_line_numbers.items.len), .end = @intCast(shared_line_numbers.items.len + function.line_numbers.len) },
+                                    .local_variables = .{ .begin = @intCast(shared_local_variables.items.len), .end = @intCast(shared_local_variables.items.len + function.local_variables.len) },
+                                };
+                                try shared_arguments.appendSlice(function.arguments);
+                                try shared_bytecode.appendSlice(function.bytecode);
+                                try shared_line_numbers.appendSlice(function.line_numbers);
+                                try shared_local_variables.appendSlice(function.local_variables);
+                            }
 
-                        for (functions, 0..) |function, i| {
-                            function_definitions[i] = MMTypes.FunctionDefinition{
-                                .name = function.name,
-                                .modifiers = function.modifiers,
-                                .stack_size = function.stack_size,
-                                .type_reference = function.type_reference,
-                                .arguments = .{ .begin = @intCast(shared_arguments.items.len), .end = @intCast(shared_arguments.items.len + function.arguments.len) },
-                                .bytecode = .{ .begin = @intCast(shared_bytecode.items.len), .end = @intCast(shared_bytecode.items.len + function.bytecode.len) },
-                                .line_numbers = .{ .begin = @intCast(shared_line_numbers.items.len), .end = @intCast(shared_line_numbers.items.len + function.line_numbers.len) },
-                                .local_variables = .{ .begin = @intCast(shared_local_variables.items.len), .end = @intCast(shared_local_variables.items.len + function.local_variables.len) },
+                            break :blk .{
+                                function_definitions,
+                                try shared_arguments.toOwnedSlice(),
+                                try shared_bytecode.toOwnedSlice(),
+                                try shared_line_numbers.toOwnedSlice(),
+                                try shared_local_variables.toOwnedSlice(),
                             };
-                            try shared_arguments.appendSlice(function.arguments);
-                            try shared_bytecode.appendSlice(function.bytecode);
-                            try shared_line_numbers.appendSlice(function.line_numbers);
-                            try shared_local_variables.appendSlice(function.local_variables);
-                        }
+                        } else blk: {
+                            const functions = try self.readArray(MMTypes.FunctionDefinition, allocator, null, ScriptReadType);
+                            errdefer allocator.free(functions);
+                            const shared_arguments = try self.readArray(MMTypes.Argument, allocator, null, ScriptReadType);
+                            errdefer allocator.free(shared_arguments);
+                            const shared_bytecode = try self.readArray(MMTypes.Bytecode, allocator, null, ScriptReadType);
+                            errdefer allocator.free(shared_bytecode);
+                            const shared_line_numbers = try self.readArray(u16, allocator, null, ScriptReadType);
+                            errdefer allocator.free(shared_line_numbers);
+                            const shared_local_variables = try self.readArray(MMTypes.LocalVariable, allocator, null, ScriptReadType);
+                            errdefer allocator.free(shared_local_variables);
 
-                        break :blk .{
-                            function_definitions,
-                            try shared_arguments.toOwnedSlice(),
-                            try shared_bytecode.toOwnedSlice(),
-                            try shared_line_numbers.toOwnedSlice(),
-                            try shared_local_variables.toOwnedSlice(),
+                            break :blk .{
+                                functions,
+                                shared_arguments,
+                                shared_bytecode,
+                                shared_line_numbers,
+                                shared_local_variables,
+                            };
                         };
-                    } else blk: {
-                        const functions = try self.readArray(MMTypes.FunctionDefinition, allocator, null, ScriptReadType);
-                        errdefer allocator.free(functions);
-                        const shared_arguments = try self.readArray(MMTypes.Argument, allocator, null, ScriptReadType);
-                        errdefer allocator.free(shared_arguments);
-                        const shared_bytecode = try self.readArray(MMTypes.Bytecode, allocator, null, ScriptReadType);
-                        errdefer allocator.free(shared_bytecode);
-                        const shared_line_numbers = try self.readArray(u16, allocator, null, ScriptReadType);
-                        errdefer allocator.free(shared_line_numbers);
-                        const shared_local_variables = try self.readArray(MMTypes.LocalVariable, allocator, null, ScriptReadType);
-                        errdefer allocator.free(shared_local_variables);
-
-                        break :blk .{
-                            functions,
-                            shared_arguments,
-                            shared_bytecode,
-                            shared_line_numbers,
-                            shared_local_variables,
-                        };
-                    };
                     errdefer allocator.free(functions);
                     errdefer allocator.free(shared_arguments);
                     errdefer allocator.free(shared_bytecode);
@@ -260,17 +259,17 @@ pub fn MMStream(comptime Stream: type) type {
 
                     const constant_table_s64: ?[]i64 =
                         if (self.revision.head >= 0x30c)
-                        try self.readIntVector(i64, allocator)
-                    else
-                        null;
+                            try self.readIntVector(i64, allocator)
+                        else
+                            null;
 
                     const constant_table_float: []f32 = try self.readArray(f32, allocator, null, ScriptReadType);
 
                     const depending_guids: ?[]u32 =
                         if (self.revision.head >= 0x1ec)
-                        try self.readArray(u32, allocator, null, ScriptReadType)
-                    else
-                        null;
+                            try self.readArray(u32, allocator, null, ScriptReadType)
+                        else
+                            null;
 
                     return MMTypes.Script{
                         .up_to_date_script = up_to_date_script,
@@ -356,9 +355,9 @@ pub fn MMStream(comptime Stream: type) type {
             const TypeInfo = @typeInfo(T);
 
             for (arr) |*item| {
-                if (TypeInfo == .Int) {
+                if (TypeInfo == .int) {
                     item.* = try self.readInt(T);
-                } else if (TypeInfo == .Float) {
+                } else if (TypeInfo == .float) {
                     item.* = try self.readFloat(T);
                 } else item.* = switch (T) {
                     MMTypes.Bytecode => @bitCast(try self.readInt(u64)),
@@ -436,7 +435,7 @@ pub fn MMStream(comptime Stream: type) type {
         }
 
         pub fn writeInt(self: *Self, comptime T: type, val: T) !void {
-            const bit_count = @typeInfo(T).Int.bits;
+            const bit_count = @typeInfo(T).int.bits;
 
             //If the int is >16 bits and we have compressed integers enabled, use them
             if (bit_count > 16 and self.compression_flags.compressed_integers) {
@@ -472,7 +471,7 @@ pub fn MMStream(comptime Stream: type) type {
 
         pub fn writeFloat(self: *Self, val: anytype) !void {
             return self.stream.writer().writeInt(
-                std.meta.Int(.unsigned, @typeInfo(@TypeOf(val)).Float.bits),
+                std.meta.Int(.unsigned, @typeInfo(@TypeOf(val)).float.bits),
                 @bitCast(val),
                 .big,
             );
@@ -645,9 +644,9 @@ pub fn MMStream(comptime Stream: type) type {
             const TypeInfo = @typeInfo(T);
 
             for (arr) |item| {
-                if (TypeInfo == .Int) {
+                if (TypeInfo == .int) {
                     try self.writeInt(T, item);
-                } else if (TypeInfo == .Float) {
+                } else if (TypeInfo == .float) {
                     try self.writeFloat(item);
                 } else switch (T) {
                     MMTypes.Bytecode => try self.writeInt(u64, @bitCast(item)),

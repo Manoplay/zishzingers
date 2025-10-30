@@ -6,3 +6,5 @@ std/
 scripts/
 *.disasm
 *.ff
+
+se2

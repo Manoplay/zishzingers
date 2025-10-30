@@ -2785,8 +2785,8 @@ fn compileBlock(
                                         .src_b_idx = val.src_b_idx,
                                     }),
                                 },
-                                Parser.Bytecode.Params.GetBuiltinMemberClass => @panic("TODO"),
-                                Parser.Bytecode.Params.SetBuiltinMemberClass => @panic("TODO"),
+                                Parser.Bytecode.Params.GetBuiltinMemberClass => MMTypes.Bytecode{ .type = bytecode.machine_type, .op = op, .params = @bitCast(MMTypes.GetBuiltinMemberClass{ .base_idx = val.base_idx, .dst_idx = val.dst_idx }) },
+                                Parser.Bytecode.Params.SetBuiltinMemberClass => MMTypes.Bytecode{ .type = bytecode.machine_type, .op = op, .params = @bitCast(MMTypes.SetBuiltinMemberClass{ .base_idx = val.base_idx, .src_idx = val.src_idx }) },
                                 Parser.Bytecode.Params.GetMemberClass => MMTypes.Bytecode{
                                     .type = bytecode.machine_type,
                                     .op = op,

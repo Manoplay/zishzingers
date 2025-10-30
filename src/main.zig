@@ -33,18 +33,18 @@ pub fn main() !void {
     const stderr = stderr_buffer.writer();
 
     // If we have runtime safety, use GPA
-    var gpa = if (builtin.mode == .Debug)
+    var gpa = if (builtin.optimize_mode == .Debug)
         std.heap.GeneralPurposeAllocator(.{
             .stack_trace_frames = 20,
         }){}
     else {};
 
     // Only leak check GPA when runtime safety
-    defer if (builtin.mode == .Debug and gpa.deinit() == .leak)
+    defer if (builtin.optimize_mode == .Debug and gpa.deinit() == .leak)
         @panic("MEMORY LEAK");
 
     // GPA on runtime safety
-    const allocator = if (builtin.mode == .Debug)
+    const allocator = if (builtin.optimize_mode == .Debug)
         gpa.allocator()
     else
         std.heap.c_allocator;
